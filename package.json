@@ -1,0 +1,7 @@
+{
+  "name": "clasificador-facturas-ia",
+  "version": "1.0.0",
+  "description": "Extrae datos de facturas chilenas con IA y valida RUT, IVA, total y duplicados.",
+  "scripts": { "test": "node --test tests/reglas.test.js" },
+  "license": "MIT"
+}
