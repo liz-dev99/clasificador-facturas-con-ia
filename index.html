@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clasificador de facturas con IA</title>
+<meta name="description" content="Extrae los datos de facturas chilenas (fotos o PDF) con IA y valida RUT, IVA, total y duplicados.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: una columna de trabajo; arriba configuración y carga, al centro el resumen y la tabla de documentos */
+:root{
+  --bg:#F4F5F2; --paper:#FFFFFF; --ink:#1C2321; --muted:#5F6B67; --line:#D8DDD9;
+  --accent:#0F5E5A; --accent-ink:#FFFFFF; --accent-soft:#DDEEEC;
+  --stamp:#B4162E; --ok:#2E7A4E; --ok-soft:#E1F2E7; --warn:#946200; --warn-soft:#FBF0D6; --crit:#B4162E; --crit-soft:#F8E3E6;
+  --f-body:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#121816; --paper:#1A2220; --ink:#E5ECE9; --muted:#9AA8A3; --line:#2C3835;
+  --accent:#6CC4BC; --accent-ink:#0D1715; --accent-soft:#1D3633;
+  --stamp:#F08A9A; --ok:#79CC9B; --ok-soft:#183324; --warn:#E9B65E; --warn-soft:#3A2D13; --crit:#F08A9A; --crit-soft:#3B1E24; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body)}
+.wrap{max-width:1180px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-left,0px)) 64px;display:grid;gap:20px}
+header{display:grid;gap:8px;max-width:72ch}
+h1{margin:0;font-size:clamp(26px,4vw,34px);line-height:1.15;letter-spacing:-.01em}
+h1 span{color:var(--stamp);border:2px solid var(--stamp);border-radius:4px;padding:0 8px;font-size:.6em;vertical-align:middle;margin-left:8px;letter-spacing:.04em}
+h2{margin:0;font-size:17px}
+p{margin:0}
+.muted{color:var(--muted)}
+.panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:14px;min-width:0}
+.cfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-items:end}
+label.f{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+input,select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}
+input:focus-visible,select:focus-visible,button:focus-visible,.drop:focus-visible{outline:3px solid var(--accent-soft);outline-offset:1px;border-color:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;font-weight:600;font-size:14px;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:8px 14px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button:disabled{opacity:.5;cursor:default}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:28px 16px;text-align:center;background:var(--bg);cursor:pointer;display:grid;gap:6px;place-items:center}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop b{font-size:17px}
+.note{font-size:13px;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat small{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.stat b{font-family:var(--f-mono);font-size:20px;font-variant-numeric:tabular-nums}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:980px}
+th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:9px 10px;border-bottom:1px solid var(--line);background:var(--bg);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td.m{font-family:var(--f-mono);white-space:nowrap}
+.thumb{width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:var(--bg);display:block}
+.chip{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.chip.info{background:var(--accent-soft);color:var(--accent)}
+ul.iss{margin:6px 0 0;padding-left:16px;font-size:12.5px;color:var(--muted)}
+.empty{padding:36px 16px;text-align:center;color:var(--muted)}
+footer{font-size:12.5px;color:var(--muted);max-width:80ch}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Clasificador de facturas con IA <span>DTE</span></h1>
+    <p class="muted">Sube fotos o PDF de facturas y boletas chilenas. La IA lee cada documento y extrae emisor, RUT, folio, fecha y montos. Después la app valida el dígito verificador del RUT, que el IVA sea el 19% del neto, que el total cuadre y que no haya documentos repetidos. El resultado se descarga en CSV, listo para Excel o Google Sheets.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="cfg-t">
+    <h2 id="cfg-t">1. Configuración</h2>
+    <div class="cfg">
+      <label class="f" for="apikey">API key de Anthropic (se guarda solo en esta pestaña)
+        <input id="apikey" type="password" autocomplete="off" placeholder="sk-ant-...">
+      </label>
+      <label class="f" for="modelo">Modelo
+        <select id="modelo">
+          <option value="claude-sonnet-5-5">Claude Sonnet (más preciso)</option>
+          <option value="claude-haiku-5-5">Claude Haiku (más rápido y barato)</option>
+        </select>
+      </label>
+      <div class="row"><button id="demo" type="button">Ver demo sin API key</button></div>
+    </div>
+    <p class="note">La key se envía solo a api.anthropic.com desde tu navegador y se borra al cerrar la pestaña. Para un uso real con varias personas, la llamada a la API debería pasar por un servidor propio.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="up-t">
+    <h2 id="up-t">2. Documentos</h2>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Seleccionar facturas">
+      <b>Arrastra aquí fotos (JPG, PNG) o PDF</b>
+      <span class="note">o haz clic para elegir archivos</span>
+      <input id="files" type="file" accept="image/*,application/pdf" multiple hidden>
+    </div>
+    <p class="note" id="estado" aria-live="polite"></p>
+  </section>
+
+  <section class="stats" id="stats" aria-label="Resumen"></section>
+
+  <section class="panel" aria-labelledby="res-t">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="res-t">3. Resultado</h2>
+      <div class="row"><button id="csv" type="button" class="primary" disabled>Descargar CSV</button><button id="limpiar" type="button" disabled>Limpiar</button></div>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th></th><th>Documento</th><th>Emisor</th><th>RUT emisor</th><th>Folio</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th><th>Validación</th></tr></thead>
+      <tbody id="tbody"><tr><td colspan="10" class="empty">Todavía no hay documentos. Sube una factura o prueba la demo.</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <footer>Proyecto de portafolio de Elizabeth Araya Gallardo. Los documentos de ejemplo son ficticios. Las validaciones son reglas locales en JavaScript; la IA solo se usa para leer los documentos.</footer>
+</div>
+
+<script src="reglas.js"></script>
+<script>
+/* ===================== App ===================== */
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const R = Reglas;
+  const docs = [];
+
+  const PROMPT = `Eres un asistente que lee documentos tributarios chilenos (facturas, boletas, notas de crédito).
+Lee el documento adjunto y responde SOLO con un objeto JSON, sin texto adicional, con estas claves:
+{"tipo": "factura" | "boleta" | "nota_credito" | "otro",
+ "emisor": razón social del emisor,
+ "rut_emisor": RUT del emisor tal como aparece (ej. "76.543.210-3"),
+ "folio": número del documento como texto,
+ "fecha": fecha de emisión en formato AAAA-MM-DD,
+ "neto": monto neto en pesos como número entero o null,
+ "iva": IVA en pesos como número entero o null,
+ "exento": monto exento como número entero o null,
+ "total": total en pesos como número entero,
+ "confianza": "alta" | "media" | "baja"}
+Copia los montos exactamente como están impresos, aunque no cuadren. Si un dato no se lee, usa null.`;
+
+  try { $("#apikey").value = sessionStorage.getItem("apikey") || ""; } catch (e) {}
+  $("#apikey").addEventListener("input", (e) => { try { sessionStorage.setItem("apikey", e.target.value.trim()); } catch (er) {} });
+
+  /* ---- carga de archivos ---- */
+  const drop = $("#drop"), input = $("#files");
+  drop.addEventListener("click", () => input.click());
+  drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); procesar([...e.dataTransfer.files]); });
+  input.addEventListener("change", () => { procesar([...input.files]); input.value = ""; });
+
+  async function procesar(files) {
+    const key = $("#apikey").value.trim();
+    if (!key) { estado("Ingresa tu API key de Anthropic, o prueba la demo sin key."); return; }
+    const validos = files.filter((f) => /^image\//.test(f.type) || f.type === "application/pdf");
+    if (!validos.length) { estado("Solo se aceptan imágenes (JPG, PNG, WEBP) o PDF."); return; }
+    for (let i = 0; i < validos.length; i++) {
+      const f = validos[i];
+      estado(`Leyendo ${i + 1} de ${validos.length}: ${f.name}…`);
+      try {
+        const { bloque, thumb } = await prepararArchivo(f);
+        const datos = await extraer(key, bloque);
+        agregar({ ...datos, archivo: f.name, thumb });
+      } catch (e) {
+        agregar({ archivo: f.name, error: e.message || String(e) });
+      }
+    }
+    estado(`Listo: ${validos.length} documento(s) procesado(s).`);
+  }
+
+  async function prepararArchivo(f) {
+    if (f.type === "application/pdf") {
+      const data = await aBase64(f);
+      return { bloque: { type: "document", source: { type: "base64", media_type: "application/pdf", data } }, thumb: "" };
+    }
+    const blob = await reducir(f, 1600, 0.85);
+    const data = await aBase64(blob);
+    return { bloque: { type: "image", source: { type: "base64", media_type: "image/jpeg", data } }, thumb: URL.createObjectURL(blob) };
+  }
+  function aBase64(blob) {
+    return new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1]); r.onerror = mal; r.readAsDataURL(blob); });
+  }
+  async function reducir(blob, max, calidad) {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise((r) => c.toBlob(r, "image/jpeg", calidad));
+  }
+
+  async function extraer(key, bloque) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({ model: $("#modelo").value, max_tokens: 800, messages: [{ role: "user", content: [bloque, { type: "text", text: PROMPT }] }] }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      if (res.status === 401) throw new Error("La API key no es válida.");
+      if (res.status === 429) throw new Error("Límite de uso de la API alcanzado; espera un momento.");
+      throw new Error(`Error ${res.status} de la API: ${t.slice(0, 160)}`);
+    }
+    const json = await res.json();
+    const texto = (json.content || []).map((c) => c.text || "").join("");
+    const a = texto.indexOf("{"), b = texto.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error("La IA no devolvió datos legibles.");
+    return JSON.parse(texto.slice(a, b + 1));
+  }
+
+  /* ---- estado y render ---- */
+  function agregar(doc) {
+    doc.obs = doc.error ? [{ nivel: "crit", txt: doc.error }] : R.validar(doc, docs.filter((d) => !d.error));
+    docs.push(doc);
+    render();
+  }
+  function estado(t) { $("#estado").textContent = t; }
+
+  function render() {
+    const tb = $("#tbody");
+    const lista = docs.filter((d) => !d.error);
+    $("#csv").disabled = !docs.length; $("#limpiar").disabled = !docs.length;
+    const conObs = docs.filter((d) => d.obs.length).length;
+    const suma = (k) => lista.reduce((a, d) => a + (R.num(d[k]) || 0), 0);
+    $("#stats").innerHTML = docs.length ? [
+      ["Documentos", docs.length], ["Sin observaciones", docs.length - conObs], ["Con observaciones", conObs],
+      ["Neto", R.clp(suma("neto"))], ["IVA", R.clp(suma("iva"))], ["Total", R.clp(suma("total"))],
+    ].map(([l, v]) => `<div class="stat"><small>${l}</small><b>${v}</b></div>`).join("") : "";
+    if (!docs.length) { tb.innerHTML = `<tr><td colspan="10" class="empty">Todavía no hay documentos. Sube una factura o prueba la demo.</td></tr>`; return; }
+    tb.innerHTML = "";
+    for (const d of docs) {
+      const tr = document.createElement("tr");
+      const peor = d.obs.some((o) => o.nivel === "crit") ? "crit" : d.obs.length ? "warn" : "ok";
+      const etiqueta = peor === "ok" ? "OK" : peor === "crit" ? "Revisar" : "Incompleto";
+      tr.innerHTML = `<td>${d.thumb ? `<img class="thumb" alt="">` : ""}</td>
+        <td><b data-k="tipo"></b><div class="muted" data-k="archivo" style="font-size:12px"></div></td>
+        <td data-k="emisor"></td><td class="m" data-k="rut"></td><td class="m" data-k="folio"></td><td class="m" data-k="fecha"></td>
+        <td class="n">${R.clp(R.num(d.neto))}</td><td class="n">${R.clp(R.num(d.iva))}</td><td class="n">${R.clp(R.num(d.total))}</td>
+        <td><span class="chip ${peor}">${etiqueta}</span>${d.confianza && d.confianza !== "alta" ? ` <span class="chip info">lectura ${d.confianza}</span>` : ""}<ul class="iss"></ul></td>`;
+      if (d.thumb) tr.querySelector("img").src = d.thumb;
+      const set = (k, v) => (tr.querySelector(`[data-k="${k}"]`).textContent = v ?? "—");
+      set("tipo", ({ factura: "Factura", boleta: "Boleta", nota_credito: "Nota de crédito" })[d.tipo] || (d.error ? "Error" : "Otro"));
+      set("archivo", d.archivo); set("emisor", d.emisor); set("rut", d.rut_emisor ? R.formatoRut(d.rut_emisor) : "—");
+      set("folio", d.folio); set("fecha", d.fecha);
+      const ul = tr.querySelector("ul");
+      d.obs.forEach((o) => { const li = document.createElement("li"); li.textContent = o.txt; ul.appendChild(li); });
+      if (!d.obs.length) ul.remove();
+      tb.appendChild(tr);
+    }
+  }
+
+  /* ---- CSV ---- */
+  $("#csv").addEventListener("click", () => {
+    const cols = ["archivo", "tipo", "emisor", "rut_emisor", "folio", "fecha", "neto", "iva", "exento", "total", "estado", "observaciones"];
+    const celda = (v) => { const s = String(v ?? "").replace(/^[=+\-@]/, "'$&"); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const filas = docs.map((d) => [d.archivo, d.tipo, d.emisor, d.rut_emisor, d.folio, d.fecha, R.num(d.neto), R.num(d.iva), R.num(d.exento), R.num(d.total),
+      d.obs.length ? "REVISAR" : "OK", d.obs.map((o) => o.txt).join(" | ")].map(celda).join(";"));
+    const blob = new Blob(["﻿" + [cols.join(";"), ...filas].join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `facturas-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+  $("#limpiar").addEventListener("click", () => { docs.length = 0; estado(""); render(); });
+
+  /* ---- demo con documentos ficticios ---- */
+  const DEMO = [
+    { archivo: "factura-los-andes.png", thumb: "ejemplos/factura-los-andes.png", tipo: "factura", emisor: "Distribuidora Los Andes SpA", rut_emisor: "76.543.210-3", folio: "18452", fecha: "2026-11-03", neto: 76160, iva: 14470, exento: null, total: 90630, confianza: "alta" },
+    { archivo: "factura-lacteos-del-sur.png", thumb: "ejemplos/factura-lacteos-del-sur.png", tipo: "factura", emisor: "Lácteos del Sur Ltda.", rut_emisor: "76.881.234-9", folio: "9031", fecha: "2026-11-05", neto: 61390, iva: 11900, exento: null, total: 73290, confianza: "alta" },
+    { archivo: "factura-envases-pacifico.png", thumb: "ejemplos/factura-envases-pacifico.png", tipo: "factura", emisor: "Envases Pacífico SpA", rut_emisor: "78.002.345-2", folio: "5520", fecha: "2026-11-06", neto: 45000, iva: 8550, exento: null, total: 53550, confianza: "alta" },
+    { archivo: "IMG-20261107-WA0012.jpg (reenviada)", thumb: "ejemplos/factura-los-andes.png", tipo: "factura", emisor: "Distribuidora Los Andes SpA", rut_emisor: "76.543.210-3", folio: "18452", fecha: "2026-11-03", neto: 76160, iva: 14470, exento: null, total: 90630, confianza: "media" },
+  ];
+  $("#demo").addEventListener("click", () => {
+    docs.length = 0;
+    DEMO.forEach((d) => agregar({ ...d }));
+    estado("Demo cargada con 4 documentos ficticios. Así se ve el resultado después de que la IA lee cada foto.");
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
